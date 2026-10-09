@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Survivor Arena</title>
+    <style>
+        body {
+            margin: 0;
+            background: #05050a;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+        #hud {
+            position: absolute;
+            top: 20px;
+            width: 900px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 18px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            pointer-events: none;
+            text-shadow: 0 0 10px rgba(255,255,255,0.5);
+        }
+        canvas {
+            border: 3px solid #1e1e3f;
+            box-shadow: 0 0 40px rgba(0, 242, 254, 0.2);
+            background: #090913;
+        }
+        #upgradeScreen {
+            display: none;
+            position: absolute;
+            background: rgba(10, 10, 25, 0.95);
+            border: 2px solid #00f2fe;
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            box-shadow: 0 0 50px rgba(0, 242, 254, 0.4);
+            z-index: 10;
+        }
+        .upgrade-btn {
+            background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+            color: #000;
+            border: none;
+            padding: 12px 25px;
+            margin: 10px 0;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            display: block;
+            width: 300px;
+            transition: 0.2s;
+            box-shadow: 0 0 15px rgba(0, 242, 254, 0.4);
+        }
+        .upgrade-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 25px rgba(0, 242, 254, 0.8);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="hud">
+        <div>⭐ Nivel: <span id="uiLvl">1</span> | XP: <span id="uiXp">0</span>/<span id="uiMaxXp">10</span></div>
+        <div>💀 Bajas: <span id="uiKills">0</span></div>
+        <div>❤️ HP: <span id="uiHp">100</span>/100</div>
+    </div>
+
+    <canvas id="gameCanvas" width="900" height="600"></canvas>
+
+    <div id="upgradeScreen">
+        <h2 style="color: #00f2fe; margin-top: 0; text-shadow: 0 0 10px #00f2fe;">¡SUBES DE NIVEL!</h2>
+        <p style="color: #bbb;">Selecciona una mejora para volverte imparable:</p>
+        <div id="upgradeOptions"></div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let gameActive = true;
+        let scoreKills = 0;
+
+        // Jugador
+        let player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: 12,
+            speed: 3.5,
+            hp: 100,
+            maxHp: 100,
+            lvl: 1,
+            xp: 0,
+            maxXp: 10,
+            damage: 25,
+            fireRate: 40, // fotogramas por disparo
+            fireTimer: 0
+        };
+
+        let keys = {};
+        window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+        let enemies = [];
+        let bullets = [];
+        let particles = [];
+        let gems = [];
+        let enemySpawnTimer = 0;
+
+        // Clases de Entidades
+        class Enemy {
+            constructor() {
+                // Spawnear aleatorio en los bordes de la pantalla
+                if (Math.random() < 0.5) {
+                    this.x = Math.random() < 0.5 ? -20 : canvas.width + 20;
+                    this.y = Math.random() * canvas.height;
+                } else {
+                    this.x = Math.random() * canvas.width;
+                    this.y = Math.random() < 0.5 ? -20 : canvas.height + 20;
+                }
+                this.radius = 10;
+                this.speed = 1.8 + Math.random() * 0.8 + (player.lvl * 0.1);
+                this.hp = 30 + (player.lvl * 10);
+                this.color = '#ff3366';
+            }
+            update() {
+                let dx = player.x - this.x;
+                let dy = player.y - this.y;
+                let dist = Math.hypot(dx, dy);
+                if (dist > 1) {
+                    this.x += (dx / dist) * this.speed;
+                    this.y += (dy / dist) * this.speed;
+                }
+            }
+            draw() {
+                ctx.save();
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        class Bullet {
+            constructor(tx, ty) {
+                this.x = player.x;
+                this.y = player.y;
+                this.radius = 5;
+                let angle = Math.atan2(ty - player.y, tx - player.x);
+                let speed = 9;
+                this.vx = Math.cos(angle) * speed;
+                this.vy = Math.sin(angle) * speed;
+                this.color = '#00f2fe';
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+            }
+            draw() {
+                ctx.save();
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = this.color;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        class Gem {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 6;
+                this.color = '#00ff66';
+            }
+            draw() {
+                ctx.save();
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = this.color;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        function findNearestEnemy() {
+            if (enemies.length === 0) return null;
+            let nearest = enemies[0];
+            let minDist = Math.hypot(nearest.x - player.x, nearest.y - player.y);
+            for (let i = 1; i < enemies.length; i++) {
+                let dist = Math.hypot(enemies[i].x - player.x, enemies[i].y - player.y);
+                if (dist < minDist) {
+                    minDist = dist;
+                    nearest = enemies[i];
+                }
+            }
+            return nearest;
+        }
+
+        function triggerLevelUp() {
+            gameActive = false;
+            const screen = document.getElementById('upgradeScreen');
+            const options = document.getElementById('upgradeOptions');
+            options.innerHTML = '';
+
+            let upgrades = [
+                { title: '⚡ Velocidad de Ataque +25%', action: () => { player.fireRate = Math.max(10, player.fireRate - 8); } },
+                { title: '⚔️ Daño de Disparo +15', action: () => { player.damage += 15; } },
+                { title: '🚀 Velocidad de Movimiento +20%', action: () => { player.speed += 0.8; } },
+                { title: '💖 Curación Completa + Mejora HP Max', action: () => { player.maxHp += 25; player.hp = player.maxHp; } }
+            ];
+
+            // Seleccionar 3 mejoras aleatorias
+            upgrades.sort(() => Math.random() - 0.5);
+            upgrades.slice(0, 3).forEach(up => {
+                let btn = document.createElement('button');
+                btn.className = 'upgrade-btn';
+                btn.innerText = up.title;
+                btn.onclick = () => {
+                    up.action();
+                    screen.style.display = 'none';
+                    gameActive = true;
+                };
+                options.appendChild(btn);
+            });
+
+            screen.style.display = 'block';
+        }
+
+        function update() {
+            if (!gameActive) return;
+
+            // Movimiento del jugador
+            let moveX = 0, moveY = 0;
+            if (keys['w'] || keys['arrowup']) moveY = -1;
+            if (keys['s'] || keys['arrowdown']) moveY = 1;
+            if (keys['a'] || keys['arrowleft']) moveX = -1;
+            if (keys['d'] || keys['arrowright']) moveX = 1;
+
+            if (moveX !== 0 && moveY !== 0) {
+                moveX *= 0.7071;
+                moveY *= 0.7071;
+            }
+
+            player.x += moveX * player.speed;
+            player.y += moveY * player.speed;
+
+            // Limitar al canvas
+            player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+            player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+
+            // Disparar automático al enemigo más cercano
+            player.fireTimer++;
+            if (player.fireTimer >= player.fireRate) {
+                let target = findNearestEnemy();
+                if (target) {
+                    bullets.push(new Bullet(target.x, target.y));
+                    player.fireTimer = 0;
+                }
+            }
+
+            // Spawn de enemigos progresivo
+            enemySpawnTimer++;
+            if (enemySpawnTimer > Math.max(15, 60 - player.lvl * 3)) {
+                enemies.push(new Enemy());
+                enemySpawnTimer = 0;
+            }
+
+            // Actualizar balas
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                bullets[i].update();
+                // Fuera de pantalla
+                if (bullets[i].x < 0 || bullets[i].x > canvas.width || bullets[i].y < 0 || bullets[i].y > canvas.height) {
+                    bullets.splice(i, 1);
+                }
+            }
+
+            // Actualizar enemigos y colisiones bala-enemigo
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                enemies[i].update();
+
+                // Colisión con jugador
+                let distToPlayer = Math.hypot(enemies[i].x - player.x, enemies[i].y - player.y);
+                if (distToPlayer < player.radius + enemies[i].radius) {
+                    player.hp -= 0.6; // Daño continuo
+                    if (player.hp <= 0) {
+                        alert("¡FIN DE LA PARTIDA! Sobreviviste con nivel " + player.lvl + " y " + scoreKills + " bajas.");
+                        document.location.reload();
+                    }
+                }
+
+                // Colisión con balas
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    let dist = Math.hypot(enemies[i].x - bullets[j].x, enemies[i].y - bullets[j].y);
+                    if (dist < enemies[i].radius + bullets[j].radius) {
+                        enemies[i].hp -= player.damage;
+                        bullets.splice(j, 1);
+                        if (enemies[i].hp <= 0) {
+                            gems.push(new Gem(enemies[i].x, enemies[i].y));
+                            enemies.splice(i, 1);
+                            scoreKills++;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Recoger gemas de XP
+            for (let i = gems.length - 1; i >= 0; i--) {
+                let dist = Math.hypot(player.x - gems[i].x, player.y - gems[i].y);
+                // Iman de XP si está cerca
+                if (dist < 120) {
+                    gems[i].x += (player.x - gems[i].x) * 0.08;
+                    gems[i].y += (player.y - gems[i].y) * 0.08;
+                }
+                if (dist < player.radius + gems[i].radius) {
+                    gems.splice(i, 1);
+                    player.xp++;
+                    if (player.xp >= player.maxXp) {
+                        player.lvl++;
+                        player.xp = 0;
+                        player.maxXp = Math.floor(player.maxXp * 1.4);
+                        triggerLevelUp();
+                    }
+                }
+            }
+
+            // Actualizar HUD HTML
+            document.getElementById('uiLvl').innerText = player.lvl;
+            document.getElementById('uiXp').innerText = player.xp;
+            document.getElementById('uiMaxXp').innerText = player.maxXp;
+            document.getElementById('uiKills').innerText = scoreKills;
+            document.getElementById('uiHp').innerText = Math.max(0, Math.ceil(player.hp));
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Dibujar rejilla de fondo futurista
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+            ctx.lineWidth = 1;
+            for (let x = 0; x < canvas.width; x += 40) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += 40) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+            }
+
+            // Dibujar gemas
+            gems.forEach(g => g.draw());
+
+            // Dibujar balas
+            bullets.forEach(b => b.draw());
+
+            // Dibujar enemigos
+            enemies.forEach(e => e.draw());
+
+            // Dibujar Jugador (Neón Cyan)
+            ctx.save();
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = '#00f2fe';
+            ctx.fillStyle = '#00f2fe';
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+    </script>
+</body>
+</html>
